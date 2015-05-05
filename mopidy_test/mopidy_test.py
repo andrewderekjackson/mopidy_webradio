@@ -46,7 +46,10 @@ class TestFrontend(pykka.ThreadingActor, core.CoreListener):
             current_volume = self.core.mixer.get_volume().get()
             logger.info("Current volume: " + str(current_volume))
 
-            current_volume += 3
+            current_volume += 5
+
+            if current_volume > 100:
+                current_volume = 100
 
             self.core.mixer.set_volume(current_volume)
             logger.info("New volume: " + str(current_volume))
@@ -55,7 +58,10 @@ class TestFrontend(pykka.ThreadingActor, core.CoreListener):
             current_volume = self.core.mixer.get_volume().get()
             logger.info("Current volume: " + str(current_volume))
 
-            current_volume -= 3
+            current_volume -= 5
+
+            if current_volume < 0:
+                current_volume = 0
 
             self.core.mixer.set_volume(current_volume)
             logger.info("New volume: " + str(current_volume))
@@ -101,11 +107,11 @@ class TestFrontend(pykka.ThreadingActor, core.CoreListener):
 
     def load_playlist(self):
 
-        pl = self.core.playlists.get_items("spotify:user:1230911936:playlist:04OMIJJH2YSLkeVl5jhXjl").get()
+        pl = self.core.playlists.lookup("spotify:user:1230911936:playlist:04OMIJJH2YSLkeVl5jhXjl").get()
         logger.info(pl)
 
         self.core.tracklist.clear()
-        self.core.tracklist.add(uris=pl)
+        self.core.tracklist.add(pl.tracks)
 
         self.core.tracklist.set_random(True)
 

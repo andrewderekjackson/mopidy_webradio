@@ -48,8 +48,8 @@ class RotaryEncoder:
         #GPIO.setup(self.button, GPIO.IN)
 
         # Add event detection to the GPIO inputs
-        GPIO.add_event_detect(self.pinA, GPIO.FALLING, callback=self.switch_event)
-        GPIO.add_event_detect(self.pinB, GPIO.FALLING, callback=self.switch_event)
+        GPIO.add_event_detect(self.pinA, GPIO.FALLING, callback=self.switch_event, bouncetime=2)
+        GPIO.add_event_detect(self.pinB, GPIO.FALLING, callback=self.switch_event, bouncetime=2)
         GPIO.add_event_detect(self.button, GPIO.BOTH, callback=self.button_event, bouncetime=200)
         return
 
