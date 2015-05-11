@@ -2,11 +2,12 @@
 import pykka, logging
 import time
 
-from .button_controller import ButtonController
-import lcd
 from rotary_encoder import RotaryEncoder
-from lcd import LcdController
 from mopidy import core
+
+from radio_menu import RadioMenu
+from lcd_menu import Command, MenuItem, DynamicMenuItem
+from lcd import Lcd
 
 import os,operator
 
@@ -24,67 +25,54 @@ class TestFrontend(pykka.ThreadingActor, core.CoreListener):
         super(TestFrontend, self).__init__()
         self.core = core
 
-        self.lcd = LcdController()
-        self.rotary = RotaryEncoder(ROTARY_PIN_A, ROTARY_PIN_B, ROTARY_BUTTON, self.switch_event)
-        self.down_time_button = time.time()
         self._now_playing_track = None
+        self.lcd = Lcd()
+        self.radioMenu = RadioMenu(self.lcd, self)
 
         logger.info("My plugin has loaded!")
 
         # set up fallback image
         self.plugin_dir = os.path.dirname(os.path.realpath(__file__))
-        logger.info("Current directory is " + self.plugin_dir)
         self.fallback_image = self.plugin_dir + "/images/on_the_air.jpg"
-        logger.info("Fallback image is " + self.fallback_image)
 
-        self.lcd.message("Internet Radio (Loading)")
+        self.radioMenu.loading()
 
-    # This is the event callback routine to handle events
-    def switch_event(self, event):
-        if event == RotaryEncoder.CLOCKWISE:
+    def volume_up(self):
+        logger.info("COMMAND: Volume Up")
 
-            current_volume = self.core.mixer.get_volume().get()
-            logger.info("Current volume: " + str(current_volume))
+        current_volume = self.core.mixer.get_volume().get()
+        logger.info("Current volume: " + str(current_volume))
 
-            current_volume += 5
+        current_volume += 5
 
-            if current_volume > 100:
-                current_volume = 100
+        if current_volume > 100:
+            current_volume = 100
 
-            self.core.mixer.set_volume(current_volume)
-            logger.info("New volume: " + str(current_volume))
+        self.core.mixer.set_volume(current_volume)
+        logger.info("New volume: " + str(current_volume))
 
-        elif event == RotaryEncoder.ANTICLOCKWISE:
-            current_volume = self.core.mixer.get_volume().get()
-            logger.info("Current volume: " + str(current_volume))
+    def volume_down(self):
+        logger.info("COMMAND: Volume Down")
 
-            current_volume -= 5
+        current_volume = self.core.mixer.get_volume().get()
+        logger.info("Current volume: " + str(current_volume))
 
-            if current_volume < 0:
-                current_volume = 0
+        current_volume -= 5
 
-            self.core.mixer.set_volume(current_volume)
-            logger.info("New volume: " + str(current_volume))
+        if current_volume < 0:
+            current_volume = 0
 
-        elif event == RotaryEncoder.BUTTONDOWN:
-            self.toggle_play()
-
-        return
+        self.core.mixer.set_volume(current_volume)
+        logger.info("New volume: " + str(current_volume))
 
     def toggle_play(self):
+        logger.info("COMMAND: Toggling Play State")
 
         current_state = self.core.playback.get_state().get()
 
         logger.info("state is: " + current_state)
 
         if current_state == core.PlaybackState.STOPPED:
-
-            l = self.core.tracklist.get_length().get()
-            logger.info(l)
-
-            if l == 0:
-                logger.info("Loading default playlist")
-                self.load_playlist()
 
             current_state = self.core.playback.get_state().get()
             logger.info("state is: " + current_state)
@@ -103,17 +91,81 @@ class TestFrontend(pykka.ThreadingActor, core.CoreListener):
         logger.info("new state is: " + self.core.playback.get_state().get())
 
     def playlists_loaded(self):
-        self.lcd.message("Internet Radio")
+        logger.info("Playlists Loaded - navigating to default screen")
+        self.radioMenu.close()
 
-    def load_playlist(self):
+    def menu_load_playlists(self, uri=None):
+        '''Returns the list of playlists'''
 
-        pl = self.core.playlists.lookup("spotify:user:1230911936:playlist:04OMIJJH2YSLkeVl5jhXjl").get()
+        if uri:
+            logger.info("Loading menu level: " + uri)
+        else:
+            logger.info("Loading root menu level")
+
+        root_level = self.core.library.browse(uri).get()
+
+        print root_level
+
+        items = []
+
+        for entry in root_level:
+            if entry.type == "directory":
+                items.append(DynamicMenuItem(entry.name, self.menu_load_playlists, entry.uri))
+            elif entry.type == "track":
+                items.append(Command(entry.name, self.load_track_and_play, entry.uri))
+            elif entry.type == "playlist":
+                items.append(Command(entry.name, self.load_playlist_and_play, entry.uri))
+
+        return items
+
+
+    def load_playlist(self, uri):
+        """
+        Loads the items of the play list to the track list
+        """
+        logger.info("Playing playlist")
+        logger.info("Loading playlist: " + uri)
+
+        pl = self.core.playlists.lookup(uri).get()
         logger.info(pl)
 
         self.core.tracklist.clear()
         self.core.tracklist.add(pl.tracks)
 
         self.core.tracklist.set_random(True)
+
+    def load_playlist_and_play(self, uri):
+
+        # close out of the menu
+        self.radioMenu.close()
+
+        self.lcd.message("Loading playlist...")
+
+        self.load_playlist(uri)
+        self.core.playback.play()
+
+    def load_track_and_play(self, uri):
+
+        logger.info("Playing track")
+        logger.info(uri)
+
+        # close out of the menu
+        self.radioMenu.close()
+
+        self.lcd.message("Playing...")
+
+        self.core.tracklist.clear()
+        self.core.tracklist.add(uris=[uri])
+
+        self.core.playback.play()
+
+
+    def load_default_playlist_and_play(self):
+
+        if self.core.tracklist.get_length().get() == 0:
+            self.load_playlist("spotify:user:1230911936:playlist:04OMIJJH2YSLkeVl5jhXjl")
+
+        self.toggle_play()
 
     def show_now_playing(self, track):
 
@@ -169,6 +221,7 @@ class TestFrontend(pykka.ThreadingActor, core.CoreListener):
             except Exception as ex:
                 logger.error("Error downloading image ...")
                 logger.error(ex)
+                track_image_path = self.fallback_image
 
         logger.info("Updating LCD")
         self.lcd.now_playing(track_image_path, name.encode("utf8","ignore") or "", artists.encode("utf8","ignore") or "")
@@ -199,3 +252,4 @@ class TestFrontend(pykka.ThreadingActor, core.CoreListener):
     def stream_title_changed(self, title):
         pass
         #self.lcd.now_playing(self.fallback_image, title, "")
+

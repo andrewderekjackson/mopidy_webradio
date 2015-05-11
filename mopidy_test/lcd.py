@@ -1,9 +1,10 @@
-from time import sleep
-import Image, ImageFont, ImageDraw, os
 
-import Adafruit_ILI9341 as TFT
-import Adafruit_GPIO as GPIO
-import Adafruit_GPIO.SPI as SPI
+# Screen dimentions
+import threading
+
+X_MAX = 320
+Y_MAX = 240
+OFFSET = 30
 
 # TFT configuration
 DC = 18
@@ -11,77 +12,122 @@ RST = 23
 SPI_PORT = 0
 SPI_DEVICE = 0
 
-X_MAX = 320
-Y_MAX = 240
-MARGIN = 5
+# for PIL
+import Image, ImageFont, ImageDraw, textwrap, os
 
-class LcdController(object):
+# TFT libraries
+import Adafruit_ILI9341 as TFT
+import Adafruit_GPIO as GPIO
+import Adafruit_GPIO.SPI as SPI
+
+
+class Lcd(object):
 
     def __init__(self):
-        self.disp = TFT.ILI9341(DC, rst=RST, spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE, max_speed_hz=64000000))
-
         # Initialize display.
+        self.disp = TFT.ILI9341(DC, rst=RST, spi=SPI.SpiDev(SPI_PORT, SPI_DEVICE, max_speed_hz=64000000))
         self.disp.begin()
-        self.font_dir = os.path.dirname(os.path.realpath(__file__)) + "/fonts"
-        self._last_image = None
+
+        self.current_dir = os.path.dirname(os.path.realpath(__file__))
+        self.message_timer = None
+
+        # load the fonts
+        self.font = ImageFont.truetype(self.current_dir + "/arial.ttf", 18)
+        self.font_large = ImageFont.truetype(self.current_dir + "/ttwpgott.ttf", 30)
+
+    def draw_menu(self, title, current_item, total_items):
+
+        image = Image.new("RGBA", (X_MAX, Y_MAX))
+
+        text_image, width, height = self.draw_centered_text(title, self.font_large)
+        image.paste(text_image, (0, Y_MAX / 2 - height / 2 - OFFSET), text_image)
+
+        text_image, width, height = self.draw_centered_text(
+            "(" + str(current_item + 1) + "/" + str(total_items) + ")", self.font)
+        image.paste(text_image, (X_MAX / 2 - width / 2, Y_MAX - OFFSET), text_image)
+
+        self.disp.display(image.rotate(90))
+
+
+    def draw_centered_text(self, text, font, fill=(255, 255, 255)):
+
+        # Create a new image with transparent background to store the text.
+        textimage = Image.new('RGBA', (X_MAX, Y_MAX), (0, 0, 0, 0))
+        textdraw = ImageDraw.Draw(textimage)
+
+        lines = textwrap.wrap(text, width=25)
+        y_text = 0
+        for line in lines:
+            text_width, text_height = font.getsize(line)
+            textdraw.text((X_MAX / 2 - text_width / 2, y_text), line, font=font, fill=fill)
+            y_text += text_height
+
+        return (textimage, X_MAX, y_text)
+
+    def message(self, message_string):
+        image = self._create_message(message_string)
+        self.disp.display(image.rotate(90))
+
+    def message2(self, primary_text, secondary_text):
+        image = Image.new("RGBA", (X_MAX, Y_MAX))
+
+        text_image, width, height = self.draw_centered_text(primary_text, self.font_large)
+        image.paste(text_image, (0, Y_MAX / 2 - height / 2 - OFFSET), text_image)
+
+        text_image, width, height = self.draw_centered_text(secondary_text, self.font)
+        image.paste(text_image, (0, Y_MAX - 70 - height/2), text_image)
+
+        self.disp.display(image.rotate(90))
+
+    def flash(self, message_string, callback, interval=3):
+
+        if self.message_timer is not None:
+            self.message_timer.cancel()
+            self.message_timer = None
+
+        image = self._create_message(message_string)
+        self.disp.display(image.rotate(90))
+
+        self.message_timer = threading.Timer(interval, callback)
+        self.message_timer.start()
+
+    def _create_message(self, message_string):
+
+        image = Image.new("RGBA", (X_MAX, Y_MAX))
+
+        text_image, width, height = self.draw_centered_text(message_string, self.font_large)
+        image.paste(text_image, (0, Y_MAX / 2 - height / 2 - OFFSET), text_image)
+
+        return image
 
     def now_playing(self, cover_image, primary_text, secondary_text):
 
         image = self._create_now_playing(cover_image, primary_text, secondary_text)
 
-        self._last_image = image
         self.disp.display(image.rotate(90))
-
-    def message(self, message_string):
-
-        image = Image.new("RGB", (X_MAX, Y_MAX), "white")
-        font = ImageFont.load(self.font_dir + "/courB12.pil")
-
-        draw = ImageDraw.Draw(image)
-
-        w, h = draw.textsize(message_string, font=font)
-
-        draw.text(((X_MAX-w)/2,(Y_MAX-h)/2),
-                  message_string,
-                  font=font,
-                  fill='black')
-
-        self.disp.display(image.rotate(90))
-
-    def show_last_screen(self):
-        if self._last_image is not None:
-            self.disp.display(self._last_image.rotate(90))
 
     def _create_now_playing(self, image_file, artist_text, title_text):
 
         cover = Image.open(image_file)
         cover.thumbnail((X_MAX-50, Y_MAX-50))
 
+        margin = 5
+
         image = Image.new("RGB", (X_MAX, Y_MAX), "white")
-        image.paste(cover, (X_MAX/2 - cover.size[0]/2, MARGIN))
-
-
-
-        font = ImageFont.load(self.font_dir + "/courB12.pil")
-        font_bold = ImageFont.load(self.font_dir + "/courB12.pil")
+        image.paste(cover, (X_MAX/2 - cover.size[0]/2, margin))
 
         draw = ImageDraw.Draw(image)
 
-        title_text_size = font.getsize(title_text)
-        draw.text((X_MAX/2-title_text_size[0]/2, Y_MAX-title_text_size[1] - MARGIN),
+        title_text_size = self.font.getsize(title_text)
+        draw.text((X_MAX/2-title_text_size[0]/2, Y_MAX-title_text_size[1] - margin),
                   title_text,
-                  font=font,
+                  font=self.font,
                   fill='black')
 
-        artist_text_size = font_bold.getsize(artist_text)
-        draw.text((X_MAX/2-artist_text_size[0]/2, Y_MAX-artist_text_size[1] - 17 - MARGIN),
+        artist_text_size = self.font.getsize(artist_text)
+        draw.text((X_MAX/2-artist_text_size[0]/2, Y_MAX-artist_text_size[1] - 17 - margin),
                   artist_text,
-                  font=font_bold,
+                  font=self.font,
                   fill='black')
 
         return image
-
-
-
-
-
